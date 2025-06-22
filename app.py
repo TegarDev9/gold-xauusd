@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
+import re # Mengimpor library untuk regular expression
 
 # -----------------------------------------------------------------------------
 # Konfigurasi Halaman Streamlit
@@ -28,41 +29,34 @@ Data diambil secara *real-time* dari Yahoo Finance.
 # -----------------------------------------------------------------------------
 # Fungsi untuk Memuat Data
 # -----------------------------------------------------------------------------
-# Menggunakan cache untuk mempercepat pemuatan ulang data
 @st.cache_data
 def load_data(start_date, end_date):
     """
     Memuat data historis untuk Emas, Dolar AS, Volatilitas, dan Suku Bunga.
     """
-    # Simbol ticker di Yahoo Finance
     symbols = {
-        'Gold': 'GC=F',      # Emas
-        'DXY': 'DX-Y.NYB',   # Indeks Dolar AS
-        'VIX': '^VIX',       # Indeks Volatilitas (Fear Index)
-        'TNX': '^TNX'        # Imbal Hasil Obligasi 10 Tahun AS (proxy suku bunga/inflasi)
+        'Gold': 'GC=F',
+        'DXY': 'DX-Y.NYB',
+        'VIX': '^VIX',
+        'TNX': '^TNX'
     }
     
     data_frames = []
     for key, ticker in symbols.items():
         try:
-            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
-            # Hanya gunakan kolom 'Close' dan ganti namanya sesuai simbol
+            # Menambahkan auto_adjust=True untuk menghilangkan FutureWarning
+            df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
             df = df[['Close']].rename(columns={'Close': key})
             data_frames.append(df)
         except Exception as e:
             st.error(f"Gagal memuat data untuk {key} ({ticker}): {e}")
             return pd.DataFrame()
 
-    # Gabungkan semua data frame menjadi satu
     if not data_frames:
         return pd.DataFrame()
 
     full_df = pd.concat(data_frames, axis=1)
-    
-    # Isi nilai yang hilang dengan metode forward fill
-    full_df = full_df.ffill()
-    # Hapus baris yang masih memiliki nilai NaN (biasanya di awal periode)
-    full_df = full_df.dropna()
+    full_df = full_df.ffill().dropna()
     
     return full_df
 
@@ -77,7 +71,6 @@ prediction_days = st.sidebar.slider("Hari Prediksi ke Depan", 1, 30, 7)
 # -----------------------------------------------------------------------------
 # Proses Utama
 # -----------------------------------------------------------------------------
-# Memuat data berdasarkan input pengguna
 data = load_data(start_date, end_date)
 
 if not data.empty:
@@ -85,23 +78,24 @@ if not data.empty:
     st.markdown("Data harga penutupan harian untuk Emas dan variabel-variabel makroekonomi terkait.")
     st.dataframe(data.tail(), use_container_width=True)
 
-    # Menyiapkan data untuk model
     df_model = data.copy()
-    # Buat target prediksi: harga emas N hari ke depan
     df_model['Gold_Target'] = df_model['Gold'].shift(-prediction_days)
-    
-    # Hapus baris terakhir yang tidak memiliki target
     df_model.dropna(inplace=True)
 
-    # Definisikan fitur (X) dan target (y)
     features = ['Gold', 'DXY', 'VIX', 'TNX']
     X = df_model[features]
     y = df_model['Gold_Target']
-
-    # Bagi data menjadi set pelatihan dan pengujian
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
     
-    # Inisialisasi dan latih model LightGBM
+    cleaned_columns = []
+    for col in X.columns:
+        col_name = ''.join(col) if isinstance(col, tuple) else col
+        cleaned_columns.append(re.sub(r'[^A-Za-z0-9_]+', '', col_name))
+    
+    X.columns = cleaned_columns
+    clean_features = X.columns.tolist()
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
     params = {
         'objective': 'regression_l1',
         'metric': 'rmse',
@@ -121,23 +115,24 @@ if not data.empty:
               eval_metric='rmse', 
               callbacks=[lgb.early_stopping(100, verbose=False)])
 
-    # -------------------------------------------------------------------------
-    # Prediksi dan Visualisasi
-    # -------------------------------------------------------------------------
     st.header("🔮 Hasil Prediksi")
     
-    # Buat prediksi untuk N hari ke depan
-    last_known_data = data[features].tail(1)
-    predicted_price = model.predict(last_known_data)[0]
+    last_known_data = data[features].tail(1).copy()
+    last_known_data.columns = clean_features 
     
-    last_close_price = data['Gold'].iloc[-1]
+    # PERBAIKAN: Gunakan .item() untuk mendapatkan nilai skalar (angka tunggal)
+    # Ini adalah cara paling aman dan modern untuk menghindari error.
+    predicted_price = model.predict(last_known_data)[0]
+    last_close_price = data['Gold'].iloc[-1].item() # Menggunakan .item() untuk konversi aman
+    
+    delta_price = predicted_price - last_close_price
     
     col1, col2 = st.columns(2)
     with col1:
         st.metric(
             label=f"Prediksi Harga Emas dalam {prediction_days} hari",
             value=f"${predicted_price:,.2f}",
-            delta=f"${predicted_price - last_close_price:,.2f}"
+            delta=f"${delta_price:,.2f}"
         )
     with col2:
         st.metric(
@@ -145,7 +140,6 @@ if not data.empty:
             value=f"${last_close_price:,.2f}"
         )
     
-    # Buat DataFrame untuk visualisasi
     future_date = data.index[-1] + pd.Timedelta(days=prediction_days)
     forecast_df = pd.DataFrame({
         'Tanggal': [data.index[-1], future_date],
@@ -153,10 +147,7 @@ if not data.empty:
         'Tipe': ['Aktual', 'Prediksi']
     })
 
-    # Visualisasi data historis dan prediksi
     fig = go.Figure()
-
-    # Tambahkan data historis
     fig.add_trace(go.Scatter(
         x=data.index, 
         y=data['Gold'], 
@@ -164,8 +155,6 @@ if not data.empty:
         name='Harga Historis Emas',
         line=dict(color='gold')
     ))
-
-    # Tambahkan garis prediksi
     fig.add_trace(go.Scatter(
         x=forecast_df['Tanggal'], 
         y=forecast_df['Harga'], 
@@ -174,7 +163,6 @@ if not data.empty:
         line=dict(color='red', dash='dot', width=2),
         marker=dict(size=8)
     ))
-
     fig.update_layout(
         title=f'Sejarah Harga Emas dan Prediksi untuk {prediction_days} Hari ke Depan',
         xaxis_title='Tanggal',
@@ -184,9 +172,6 @@ if not data.empty:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # -------------------------------------------------------------------------
-    # Analisis Pengaruh Fitur
-    # -------------------------------------------------------------------------
     st.header("📊 Analisis Faktor Penggerak Harga (Feature Importance)")
     st.markdown("""
     Grafik ini menunjukkan seberapa besar pengaruh setiap variabel terhadap model prediksi. 
@@ -203,7 +188,6 @@ if not data.empty:
         y=feature_importance['feature'],
         orientation='h'
     ))
-    
     fig_imp.update_layout(
         title='Peringkat Pentingnya Fitur dalam Model Prediksi',
         xaxis_title='Tingkat Kepentingan',
@@ -215,4 +199,3 @@ if not data.empty:
 
 else:
     st.warning("Gagal memuat data. Silakan periksa kembali pengaturan tanggal atau koneksi internet Anda.")
-
