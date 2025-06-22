@@ -141,7 +141,8 @@ if not raw_data.empty:
     
     # --- Pemeriksaan dan Tampilan Hasil ---
     if all(key in predictions for key in ['lower', 'median', 'upper']):
-        last_close_price = featured_data['Gold'].iloc[-1]
+        # PERBAIKAN: Menggunakan .item() untuk memastikan last_close_price adalah angka tunggal (scalar)
+        last_close_price = featured_data['Gold'].iloc[-1].item()
         
         # --- Membuat Visualisasi ---
         future_dates = pd.to_datetime(pd.date_range(start=featured_data.index[-1], periods=prediction_days + 1, freq='B'))
