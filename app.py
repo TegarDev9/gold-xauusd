@@ -117,7 +117,7 @@ if not raw_data.empty:
     X = df_model[features]
     y = df_model['Gold_Target']
     
-    # PERBAIKAN: Mengonversi setiap nama kolom ke string sebelum dibersihkan
+    # Mengonversi setiap nama kolom ke string sebelum dibersihkan
     X.columns = [re.sub(r'[^A-Za-z0-9_]+', '', str(col)) for col in X.columns]
     
     # Pembagian data
@@ -148,7 +148,11 @@ if not raw_data.empty:
 
     # --- Generate Prediksi ---
     last_known_features = X.tail(1)
-    predictions = {name: model.predict(last_known_features)[0] for name, model in models.items()}
+    
+    # PERBAIKAN: Menggunakan loop yang lebih eksplisit untuk menghindari bug
+    predictions = {}
+    for name, model_instance in models.items():
+        predictions[name] = model_instance.predict(last_known_features)[0]
     
     last_close_price = featured_data['Gold'].iloc[-1]
     
