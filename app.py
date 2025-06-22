@@ -117,14 +117,13 @@ if not raw_data.empty:
     X = df_model[features]
     y = df_model['Gold_Target']
     
-    # Menangani karakter tidak valid pada nama fitur untuk LightGBM
-    X.columns = [re.sub(r'[^A-Za-z0-9_]+', '', col) for col in X.columns]
+    # PERBAIKAN: Mengonversi setiap nama kolom ke string sebelum dibersihkan
+    X.columns = [re.sub(r'[^A-Za-z0-9_]+', '', str(col)) for col in X.columns]
     
     # Pembagian data
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
     # --- Pelatihan Model Quantile Regression ---
-    # Model ini akan memberikan prediksi median, serta batas bawah (10%) dan atas (90%)
     models = {}
     quantiles = {'lower': 0.1, 'median': 0.5, 'upper': 0.9}
 
@@ -154,10 +153,7 @@ if not raw_data.empty:
     last_close_price = featured_data['Gold'].iloc[-1]
     
     # --- Membuat DataFrame untuk Visualisasi ---
-    # Buat rentang tanggal untuk prediksi
     future_dates = pd.to_datetime(pd.date_range(start=featured_data.index[-1], periods=prediction_days + 1, freq='B'))
-    
-    # Ambil 60 hari terakhir data historis untuk plot
     plot_data = featured_data.tail(60).copy()
 
     # Gabungkan data historis dengan proyeksi
@@ -188,7 +184,6 @@ if not raw_data.empty:
         xaxis_title='Tanggal', yaxis_title='Harga Emas (USD)', template='plotly_dark',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-
 
     # =========================================================================
     # Tampilan Aplikasi dengan TAB
@@ -291,4 +286,3 @@ if not raw_data.empty:
 
 else:
     st.error("Gagal memuat data. Mohon periksa kembali rentang tanggal yang Anda pilih atau coba lagi nanti.")
-
